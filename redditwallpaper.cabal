@@ -48,7 +48,16 @@ Executable RedditWallpaper
   Main-is:             RedditWallpaper.hs
   
   -- Packages needed in order to build this package.
-  Build-depends:       base >= 4, json, ascii, http-enumerator, text, process, enumerator, random, filepath, directory
+  Build-depends:       base >= 4,
+                       aeson,
+                       http-enumerator,
+                       text,
+                       process,
+                       enumerator,
+                       attoparsec-enumerator,
+                       random,
+                       filepath,
+                       directory
   
   -- Modules not exported by this package.
   -- Other-modules:       

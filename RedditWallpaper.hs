@@ -1,28 +1,43 @@
 {-# LANGUAGE OverloadedStrings #-}
-import Text.JSON
-import Control.Monad
-import System.Directory
-import System.FilePath
-import System.Random
+import Control.Monad (mzero)
+import System.Directory (copyFile, removeFile)
+import System.FilePath (splitFileName, takeExtension)
+import System.Random (randomRIO)
 import System.IO hiding (withFile)
 import qualified Data.Enumerator as E
 import qualified Data.Enumerator.Binary as EI
 import Network.HTTP.Enumerator
-import Data.Ascii
-import Data.Maybe
 import Control.Exception
 import qualified System.Process as P
-import qualified Data.Text.Lazy.Encoding as TE
-import qualified Data.Text.Lazy as T
+import Data.Aeson
+import Data.Aeson.Types (Parser)
+import Data.Attoparsec.Enumerator
+import Data.Enumerator (Iteratee)
+import Data.ByteString (ByteString)
+import Control.Applicative
+import Data.List (isSuffixOf)
 
-object :: String -> Result [String]
-object json = do
-  j <- decode json
-  children <- valFromObj "data" j >>= valFromObj "children"
-  posts <- safeposts =<< mapM (valFromObj "data") children
-  fmap (filter img) $ mapM (valFromObj "url") posts
-  where img x = takeExtension x `elem` [".jpg", ".png"]
-        safeposts = filterM (fmap not . valFromObj "over_18")
+data Post = Post {
+    nsfw :: Bool
+  , uri :: String
+  , title :: String
+  } deriving Show
+newtype Posts = Posts {getPosts :: [Post]} deriving Show
+
+instance FromJSON Posts where
+  parseJSON (Object v) = do
+    v' <- v .: "data"
+    Posts <$> v' .: "children"
+  parseJSON _ = mzero
+
+instance FromJSON Post where
+  parseJSON (Object v) = do
+    v' <- v .: "data"
+    Post <$>
+      v' .: "over_18" <*>
+      v' .: "url" <*>
+      v' .: "title"
+  parseJSON _ = mzero
 
 withFile :: FilePath -> (Handle -> IO ()) -> IO ()
 withFile path f = bracket
@@ -42,12 +57,27 @@ download url =
 makeBackground :: String -> IO ()
 makeBackground path = P.readProcess "feh" ["--bg-scale", path] "" >> return ()
 
+json' :: (Monad m) => Iteratee ByteString m Value
+json' = iterParser json
+
+posts :: String -> IO (Result Posts)
+posts url = do
+  request <- parseUrl url
+  fromJSON <$> (withManager $ \manager -> do
+    E.run_ $ httpRedirect request (\_ _ -> json') manager)
+
+sfw = filter (not . nsfw)
+img = filter ((`elem` filetypes) . takeExtension . uri)
+
+filetypes :: [String]
+filetypes = [".png", ".bmp", ".jpg"]
+
 main :: IO ()
 main = do
-  json <- fmap (T.unpack . TE.decodeUtf8) (simpleHttp "http://www.reddit.com/r/wallpaper.json")
-  case resultToEither $ object json of
-       Left x -> putStrLn x
-       Right x -> do
+  p <- (fmap (map uri . sfw . img . getPosts)) <$> posts "http://www.reddit.com/r/wallpaper.json"
+  case p of
+       Error x -> putStrLn x
+       Success x -> do
          r <- randomRIO (0, length x - 1)
          let img = x !! r
          download img >>= makeBackground
