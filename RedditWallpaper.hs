@@ -45,13 +45,13 @@ withFile path f = bracket
   (\(p,h) -> hClose h >> copyFile p path >> removeFile p)
   (\(_,h) -> f h)
 
+runIt r iteratee = E.run_ . httpRedirect r iteratee
 download :: String -> IO String
 download url =
   let (_, filename) = splitFileName url
   in do
-    withFile filename $ \h -> withManager $ \m ->  do
-      request <- parseUrl $ url
-      E.run_ $ httpRedirect request (\_ _ -> EI.iterHandle h) m
+    request <- parseUrl url
+    withFile filename $ \h -> withManager (runIt request (\_ _ -> EI.iterHandle h))
     return filename
 
 makeBackground :: String -> IO ()
@@ -63,8 +63,7 @@ json' = iterParser json
 posts :: String -> IO (Result Posts)
 posts url = do
   request <- parseUrl url
-  fromJSON <$> (withManager $ \manager -> do
-    E.run_ $ httpRedirect request (\_ _ -> json') manager)
+  fromJSON <$> withManager (runIt request (\_ _ -> json'))
 
 sfw = filter (not . nsfw)
 img = filter ((`elem` filetypes) . takeExtension . uri)
@@ -74,7 +73,7 @@ filetypes = [".png", ".bmp", ".jpg"]
 
 main :: IO ()
 main = do
-  p <- (fmap (map uri . sfw . img . getPosts)) <$> posts "http://www.reddit.com/r/wallpaper.json"
+  p <- fmap (map uri . sfw . img . getPosts) <$> posts "http://www.reddit.com/r/wallpaper.json"
   case p of
        Error x -> putStrLn x
        Success x -> do
